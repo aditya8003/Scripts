@@ -120,7 +120,7 @@ As
                 ELSE ses4.statement_end_offset
                 END - ses4.statement_start_offset)/2
         ),char(13),''),char(10),''),char(9),'')
-    ,blocking_ObjectName         = OBJECT_NAME(qt.objectid)
+    ,blocking_ObjectName         = OBJECT_NAME(qt4.objectid)
     ,ElapsedMS          = er.total_elapsed_time
     ,CPUTime            = er.cpu_time
     ,IOReads            = er.logical_reads + er.reads
