@@ -1,0 +1,152 @@
+USE [master]
+GO
+/****** Object:  StoredProcedure [dbo].[sp_getblocks]    Script Date: 4/23/2018 12:37:22 PM ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+--sp_getblocks
+
+ALTER PROC [dbo].[sp_getblocks]
+As 
+ Begin
+  Set NOCOUNT ON  
+  Declare @Now As DateTime = CURRENT_TIMESTAMP;
+  
+  Create Table #temp (Id int identity(1,1)
+                    ,SPID           VarChar(50)     Null
+                    ,KpID           VarChar(15)     Null
+                    ,Blocked        Varchar(50)     Null
+                    ,[Program_Name] Varchar(500)    Null 
+                    ,NT_UserName    VarChar(256)    Null
+                    ,[Database]     VarChar(256)    Null
+                    ,Duration       DateTime        Null
+                    ,CPU            int             Null
+                    ,Physical_IO    int             Null 
+                    ,MemUsageKB     int             Null
+                    ,WaitTime       int             Null
+                    ,Last_Batch     DateTime        Null
+                    ,LogiName       VarChar(256)    Null
+                    ,HostName       VarChar(256)    Null
+                    ,CommandType    Varchar(255)    Null
+                    ,Sql            VarChar(Max)    Null
+                    )
+ insert into #temp(SPID,KpID,Blocked,[Program_Name],NT_UserName,[Database]
+                   ,Duration ,CPU,Physical_IO,MemUsageKB,WaitTime,Last_Batch
+                   ,LogiName , HostName,CommandType,Sql)
+ Select QRY.SPID,QRY.KpID,QRy.Blocked, QRy.[Program_Name],QRY.Nt_Username,QRY.[Database]
+       ,QRY.Duration,QRY.[Cpu],QRY.Physical_IO,QRY.[MemUsageKB],QRY.[WaitTime],QRY.Last_Batch
+       ,QRY.LogiName,QRY.HostName, QRY.Cmd,QRYText.text 
+       from 
+ (Select
+           'SPID'        = Cast(A.SPID as varchar(15)),
+           Kpid,
+          'Blocked'     = Cast(A.blocked as varchar(15)),
+          'Cmd'         = Cast(A.Cmd as varchar(256)),
+           A.Program_Name ,
+           A.Nt_Username,
+          'Database'    = db_Name(A.DBID),
+          'Duration'    = CURRENT_TIMESTAMP,  
+          'Cpu'         =(A.CPU/1000),
+           A.Physical_IO ,
+          'MemUsageKB'  =(A.MemUsage*8),
+          'WaitTime'    =(A.WaitTime/1000),
+           A.Last_Batch ,
+           A.LogiName   ,
+           A.HostName   ,
+           A.sql_handle 
+   From  Master.dbo.SysProcesses A
+   where SPID > 5
+      And A.Cmd not in ('AWAITING COMMAND','TASK MANAGER','CHECKPOINT SLEEP')    
+   Union
+     Select
+          'SPID'        = Cast(A.SPID as varchar(15)),
+           Kpid,
+          'Blocked'     = Cast(A.blocked as varchar(15)),
+          'Cmd'         = Cast(A.Cmd as varchar(256)),
+           A.Program_Name ,
+           A.Nt_Username,
+          'Database'    = db_Name(A.DBID),
+          'Duration'    = CURRENT_TIMESTAMP,  
+          'Cpu'         =(A.CPU/1000),
+           A.Physical_IO ,
+          'MemUsageKB'  =(A.MemUsage*8),
+          'WaitTime'    =(A.WaitTime/1000),
+           A.Last_Batch ,
+           A.LogiName   ,
+           A.HostName   ,
+           A.sql_handle 
+   From  Master.dbo.SysProcesses A
+         Where A.SPID  in (Select B.Blocked from
+                              Master.dbo.SysProcesses B
+                              Where B.Blocked != 0)) QRY
+          OUTER APPLY sys.dm_exec_sql_text(QRY.sql_handle) as QRYText                              
+   Where   QRY.[Database] not in ( 'master' ) and    QRYText.text is not null                 
+ 
+ 
+ 
+  Select Distinct SPID,Blocked,WaitTime,[Database],LogiName,HostName,NT_UserName
+        ,Last_Batch,Duration,CPU,Physical_IO,MemUsageKB,KPID,[Program_Name] , CommandType,Sql As Cmd
+        from #Temp
+        Where [Database] not in ( 'master' )
+        Order By SPID;
+  -- Select SPID,Sql As Cmd from #Temp Order By SPID;
+  SELECT
+       SPID               = er.session_id
+     , Status             = ses.status
+     , [Login]            = ses.login_name
+     , Host               = ses.host_name
+     , BlkBy              = er.blocking_session_id
+     , DBName             = DB_Name(er.database_id)
+     , CommandType        = er.command
+      ,SQLStatement       =
+        replace(replace(replace(SUBSTRING
+        (
+            qt.text,
+            er.statement_start_offset/2,
+            (CASE WHEN er.statement_end_offset = -1
+                THEN LEN(CONVERT(nvarchar(MAX), qt.text)) * 2
+                ELSE er.statement_end_offset
+                END - er.statement_start_offset)/2
+        ),char(13),''),char(10),''),char(9),'')
+    ,ObjectName         = OBJECT_NAME(qt.objectid)
+    ,blocking_SQLStatement       =
+        replace(replace(replace(SUBSTRING
+        (
+            qt4.text,
+            ses4.statement_start_offset/2,
+            (CASE WHEN ses4.statement_end_offset = -1
+                THEN LEN(CONVERT(nvarchar(MAX), qt.text)) * 2
+                ELSE ses4.statement_end_offset
+                END - ses4.statement_start_offset)/2
+        ),char(13),''),char(10),''),char(9),'')
+    ,blocking_ObjectName         = OBJECT_NAME(qt.objectid)
+    ,ElapsedMS          = er.total_elapsed_time
+    ,CPUTime            = er.cpu_time
+    ,IOReads            = er.logical_reads + er.reads
+    ,IOWrites           = er.writes
+    ,LastWaitType       = er.last_wait_type
+    ,StartTime          = er.start_time
+    ,Protocol           = con.net_transport
+    ,ConnectionWrites   = con.num_writes
+    ,ConnectionReads    = con.num_reads
+    ,ClientAddress      = con.client_net_address
+    ,Authentication     = con.auth_scheme
+  FROM sys.dm_exec_requests er
+      LEFT JOIN sys.dm_exec_sessions ses
+         ON ses.session_id = er.session_id
+      LEFT JOIN sys.dm_exec_connections con
+           ON con.session_id = ses.session_id
+      OUTER APPLY sys.dm_exec_sql_text(er.sql_handle) as qt
+      LEFT JOIN sys.dm_exec_requests ses4
+         ON er.blocking_session_id = ses4.session_id		 
+      OUTER APPLY sys.dm_exec_sql_text(ses4.sql_handle) as qt4
+ WHERE er.session_id > 50
+     and er.session_id  in (Select SPID from #temp  Where [Database] not in ( 'master' ))
+ ORDER BY
+     er.blocking_session_id DESC
+    ,er.session_id; 
+  
+  Drop Table #temp;
+  Set NoCount Off;
+End
