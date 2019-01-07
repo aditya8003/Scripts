@@ -1,2 +1,0 @@
-# Scripts
-SQL DBA scripts
